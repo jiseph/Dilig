@@ -1,0 +1,262 @@
+int sensor_pin = A0;
+int StartLowest = 500;
+int StartHighest = 600;
+int minthreshold = 50;
+int maxthreshold = 100;
+int output_value ;
+int output_value2 ;
+int trigger = 800;
+int pump = D2;
+int statelight = D7;
+int activestate = 3;
+int DSM = 0;
+int DSH = 0;
+int DSS = 0;
+int pumpflow = 0;
+bool isPumpActive = false;
+int i=0;
+int days[8]={false,false,false,false,false,false,false};
+bool daypass = false;
+
+#include <NTPClient.h>
+#define BLYNK_PRINT Serial    // Comment this out to disable prints and save space
+#include <ESP8266WiFi.h>
+#include <BlynkSimpleEsp8266.h>
+#include <SimpleTimer.h>
+#include <DHT.h>
+#define DHTPIN 12 //pin gpio 12 in sensor
+#define DHTTYPE DHT22   // DHT 22 Change this if you have a DHT11
+DHT dht(DHTPIN, DHTTYPE);
+#include <WiFiUdp.h>
+
+//WIFI CREDENTIALS
+const char ssid[] = "Metatech";
+const char password[] = "SnowdenHR";
+
+//BLYNK CREDENTIALS
+char auth[] = "U-DxmKzFGsGhbAnZlk20t9Z2YomgM_6h";
+
+//NTP TIME
+const long utcOffsetInSeconds = 28800;
+char daysOfTheWeek[7][12] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
+
+
+SimpleTimer timer;
+
+void setup() {
+
+   Serial.begin(115200);
+
+//Setup Pins
+   pinMode(pump, OUTPUT);
+   digitalWrite(pump,LOW);
+   pinMode(statelight, OUTPUT);
+   digitalWrite(statelight,LOW);
+
+   Serial.begin(115200);
+
+//BLYNK Setup
+   Blynk.begin(auth, ssid, password);
+   dht.begin();
+   
+//Calling Blynk every section
+   timer.setInterval(1000L, sendUptime);
+
+//NTP CONNECTION
+   WiFi.begin(ssid, password);
+   while ( WiFi.status() != WL_CONNECTED ) {
+    delay ( 500 );
+    Serial.print ( "." );
+  }
+   timeClient.begin();
+
+
+
+}
+
+//Listeners from Blynk App
+BLYNK_WRITE(V11)
+{
+  minthreshold = param.asInt();
+  Serial.println("Min :" + String(minthreshold));
+}
+BLYNK_WRITE(V12)
+{
+  maxthreshold = param.asInt();
+  Serial.println("Max :" + String(maxthreshold));
+}
+BLYNK_WRITE(V13)
+{
+  activestate = param.asInt();
+  if (activestate == 1)
+  {
+    Serial.println("Active: Yes");
+  }
+  else
+  {
+    Serial.println("Active: No");
+  }
+  
+}
+BLYNK_WRITE(V14)
+{
+//Code fucks up if no day is selected
+  TimeInputParam t(param);  
+//  int days[8]={false,false,false,false,false,false,false,false};
+  Serial.println(t.getStartHour());
+  Serial.println(t.getStartMinute());
+  Serial.println(t.getTZ());
+  Serial.println(t.getTZ_Offset());
+  DSH = t.getStartHour();
+  DSM = t.getStartMinute();
+  DSS = t.getStartSecond();
+
+  // Add if statement for active button
+  for (i = 1; i <= 7; i++)
+  {
+    if (t.isWeekdaySelected(i))
+    {
+      Serial.println(String("Day ") + i + " is selected");
+      days[i]=true;
+      if (t.isWeekdaySelected(7))
+      {
+        days[0]=true;
+      }
+      else {
+        days[0]=false;
+      }
+        
+      for (int u=0; u<=6; u++)
+      {
+        Serial.println(days[u]);
+      }
+    } else {
+      days[i] = false;
+    }
+  }
+  
+}
+
+
+
+void sendUptime() {
+
+
+//Declaring lowest and highest point of the sensor
+   output_value= analogRead(sensor_pin);
+
+   if(output_value<=StartLowest)
+   {
+    StartLowest = output_value;
+   }
+   if(output_value>=StartHighest)
+   {
+    StartHighest = output_value;
+   }
+
+   output_value2 = map(output_value,StartHighest,StartLowest,0,100);
+
+//Current State
+  if (activestate == 1)
+  {
+    Serial.println("Active: Yes");
+  }
+  else if (activestate == 3)
+  {
+    Serial.println("Press state button to calibrate");
+  }
+  else
+  {
+    Serial.println("Active: No");
+  }
+
+//Current Moisture reading
+   Serial.print("Moisture : ");
+   Serial.print(output_value2);
+   Serial.println("%");
+   Serial.print("Current Reading: ");
+   Serial.println(output_value);
+   Serial.print("Highest Reading: ");
+   Serial.println(StartHighest);
+   Serial.print("Lowest Reading: ");
+   Serial.println(StartLowest);
+
+  
+   Serial.print(true);
+   Serial.print("Days Array: ");
+   for (int i = 0; i <= 6; i++) {
+    Serial.print(days[i]);
+   }
+   Serial.print("\nDay:");
+   Serial.println(timeClient.getDay());
+
+//Action to do at a certain time in the day
+   if (timeClient.getHours () == DSH && timeClient.getMinutes() == DSM && timeClient.getSeconds() == DSS && days[timeClient.getDay()])
+   {
+
+   
+      
+     //Action if it is over or under the threshold
+     if (output_value2 <= minthreshold) 
+     {
+       isPumpActive = true;
+       digitalWrite(pump, HIGH); // turn on the Pump
+       Serial.println("Pump is flowing");
+       delay(500);    
+     }
+   }
+
+   if(isPumpActive) {
+    if (output_value2 >= minthreshold) 
+     {
+       isPumpActive = false;
+       digitalWrite(pump, LOW); // turn on the Pump
+       Serial.println("Pump has stopped flowing");
+       delay(500);
+     }
+   }
+
+//Action to check the state of the device
+   if (activestate == 1)
+  {
+    digitalWrite(statelight, HIGH);
+  }
+  else
+  {
+    digitalWrite(statelight, LOW);
+  }
+  
+//Current threshold values
+   Serial.print("Current minthreshold value: ");
+   Serial.println(minthreshold);
+   Serial.print("Current maxthreshold value: ");
+   Serial.println(maxthreshold);
+
+//NTP Time
+   timeClient.update();
+   Serial.print(daysOfTheWeek[timeClient.getDay()]);
+   Serial.print(", ");
+   Serial.print(timeClient.getHours());
+   Serial.print(":");
+   Serial.print(timeClient.getMinutes());
+   Serial.print(":");
+   Serial.println(timeClient.getSeconds());
+   Serial.println("");
+   Serial.println("");
+
+//Data being sent to Blynk App
+   Blynk.virtualWrite(10, output_value2); // virtual pin 
+
+    
+   //minthreshold = Blynk.BLYNK_WRITE(11); // virtual pin
+   //maxthreshold = Blynk.BLYNK_WRITE(12); // virtual pin
+
+   }
+
+   void loop()
+{
+   Blynk.run();
+   timer.run();
+}
